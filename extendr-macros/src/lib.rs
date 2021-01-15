@@ -317,7 +317,7 @@ fn generate_wrappers(_opts: &ExtendrOptions, wrappers: &mut Vec<ItemFn>, prefix:
 fn extendr_impl(mut item_impl: ItemImpl) -> TokenStream {
     let opts = ExtendrOptions {};
     let self_ty = item_impl.self_ty.as_ref();
-    let self_ty_name = quote! {#self_ty}.to_string().replace(&String::from(r" < \'a >"), "").replace(&String::from(r"  \'a "), "");
+    let self_ty_name = quote! {syn::Type::Path(#self_ty)}.to_string();
     let prefix = format!("{}__", self_ty_name);
     let mut method_init_names = Vec::new();
     let mut wrappers = Vec::new();
