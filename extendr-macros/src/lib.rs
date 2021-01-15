@@ -283,6 +283,18 @@ fn generate_wrappers(_opts: &ExtendrOptions, wrappers: &mut Vec<ItemFn>, prefix:
     ));
 }
 
+fn make_name(self_ty: &syn::Type) -> String {
+    let nm = match self_ty {
+        syn::Type::Path(syn::TypePath{path : syn::Path {segments, ..}, ..}) => ({
+            match &segments[0] {
+              syn::PathSegment {ident, ..} => ident.to_string(),
+            }
+        }),
+        _ => (String::from(""))
+    };
+    nm
+}
+
 /// Handle trait implementations.
 ///
 /// Example:
@@ -317,7 +329,7 @@ fn generate_wrappers(_opts: &ExtendrOptions, wrappers: &mut Vec<ItemFn>, prefix:
 fn extendr_impl(mut item_impl: ItemImpl) -> TokenStream {
     let opts = ExtendrOptions {};
     let self_ty = item_impl.self_ty.as_ref();
-    let self_ty_name = quote! {syn::Type::Path(#self_ty)}.to_string();
+    let self_ty_name = make_name(self_ty);
     let prefix = format!("{}__", self_ty_name);
     let mut method_init_names = Vec::new();
     let mut wrappers = Vec::new();
