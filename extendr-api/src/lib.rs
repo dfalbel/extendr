@@ -444,6 +444,7 @@ mod tests {
     }
 
     #[extendr]
+    /// impl comment.
     impl Person {
         fn new() -> Self {
             Self {
@@ -460,7 +461,16 @@ mod tests {
         }
     }
 
+    // see metadata_test for the following comments.
+
+    /// comment #1
+    /// comment #2
+    /**
+        comment #3
+        comment #4
+    **/
     #[extendr]
+    /// aux_func doc comment.
     fn aux_func(_person: &Person) {}
 
     // Macro to generate exports
@@ -624,5 +634,27 @@ mod tests {
         assert_eq!(na_str(), "NA");
         assert_eq!("NA".is_na(), false);
         assert_eq!(na_str().is_na(), true);
+    }
+    
+    
+    #[test]
+    fn metadata_test() {
+        test! {
+            // Rust interface.
+            let metadata = get_my_module_metadata();
+            assert_eq!(metadata.functions[0].doc, " comment #1\n comment #2\n\n        comment #3\n        comment #4\n    *\n aux_func doc comment.");
+            assert_eq!(metadata.functions[0].name, "aux_func");
+            assert_eq!(metadata.functions[0].args[0].name, "_person");
+            assert_eq!(metadata.functions[1].name, "get_my_module_metadata");
+            assert_eq!(metadata.impls[0].name, "Person");
+            assert_eq!(metadata.impls[0].methods.len(), 3);
+
+            // R interface
+            let robj = unsafe { new_owned(wrap__get_my_module_metadata()) };
+            let functions = robj.dollar("functions").unwrap();
+            let impls = robj.dollar("impls").unwrap();
+            assert_eq!(functions.len(), 2);
+            assert_eq!(impls.len(), 1);
+        }
     }
 }
