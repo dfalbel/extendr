@@ -578,6 +578,7 @@ pub fn extendr_module(item: TokenStream) -> TokenStream {
     let module = parse_macro_input!(item as Module);
     let Module {modname, fnnames, implnames} = module;
     let modname = modname.unwrap();
+    let modname_string = modname.to_string();
     let module_init_name = format_ident!("R_init_{}_extendr", modname);
 
     let module_metadata_name = format_ident!("get_{}_metadata", modname);
@@ -621,6 +622,7 @@ pub fn extendr_module(item: TokenStream) -> TokenStream {
             });
 
             extendr_api::metadata::Metadata {
+                name: #modname_string,
                 functions,
                 impls,
             }

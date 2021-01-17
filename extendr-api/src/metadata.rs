@@ -34,6 +34,7 @@ pub struct Impl {
 /// Module metadata.
 #[derive(Debug, PartialEq)]
 pub struct Metadata {
+    pub name: &'static str,
     pub functions: Vec<Func>,
     pub impls: Vec<Impl>,
 }
@@ -74,13 +75,13 @@ impl From<Impl> for Robj {
 
 impl From<Metadata> for Robj {
     fn from(val: Metadata) -> Self {
-        let res: Robj = List(&[r!(List(val.functions)), r!(List(val.impls))]).into();
-        res.set_attrib(names_symbol(), r!(["functions", "impls"]));
+        let res: Robj = List(&[r!(val.name), r!(List(val.functions)), r!(List(val.impls))]).into();
+        res.set_attrib(names_symbol(), r!(["name", "functions", "impls"]));
         res
     }
 }
 
-fn write_r_wrapper(w: &mut Vec<u8>, func: &Func, use_symbols: bool) -> std::io::Result<()> {
+fn write_r_wrapper(w: &mut Vec<u8>, func: &Func, package_name: &str, use_symbols: bool) -> std::io::Result<()> {
     if func.hidden {
         return Ok(());
     }
@@ -104,7 +105,7 @@ fn write_r_wrapper(w: &mut Vec<u8>, func: &Func, use_symbols: bool) -> std::io::
     if use_symbols {
         write!(w, "wrap__{}", func.name)?;
     } else {
-        write!(w, "\"wrap__{}\"", func.name)?;
+        write!(w, "\"wrap__{}\", PACKAGE={}", func.name, package_name)?;
     }
 
     if func.args.is_empty() {
@@ -119,12 +120,12 @@ impl Metadata {
     pub fn make_r_wrappers(&self, use_symbols: bool) -> String {
         let mut res = Vec::new();
         for func in &self.functions {
-            write_r_wrapper(&mut res, func, use_symbols).unwrap();
+            write_r_wrapper(&mut res, func, self.name, use_symbols).unwrap();
         }
 
         for imp in &self.impls {
             for func in &imp.methods {
-                write_r_wrapper(&mut res, func, use_symbols).unwrap();
+                write_r_wrapper(&mut res, func, self.name, use_symbols).unwrap();
             }
         }
         unsafe { String::from_utf8_unchecked(res) }
