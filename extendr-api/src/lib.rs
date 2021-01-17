@@ -668,7 +668,7 @@ mod tests {
             let robj = unsafe { new_owned(wrap__get_my_module_metadata()) };
             let functions = robj.dollar("functions").unwrap();
             let impls = robj.dollar("impls").unwrap();
-            assert_eq!(functions.len(), 2);
+            assert_eq!(functions.len(), 3);
             assert_eq!(impls.len(), 1);
         }
     }
