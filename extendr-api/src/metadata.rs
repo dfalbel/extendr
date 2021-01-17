@@ -86,8 +86,21 @@ fn write_r_wrapper(w: &mut Vec<u8>, func: &Func, use_symbols: bool) -> std::io::
     }
 
     let args = func.args.iter().map(|arg| arg.name).collect::<Vec<_>>().join(", ");
+
+    if !func.doc.is_empty() {
+        write!(w, "#'")?;
+        for c in func.doc.chars() {
+            if c == '\n' {
+                write!(w, "\n#'")?;
+            } else {
+                write!(w, "{}", c)?;
+            }
+        }
+        writeln!(w, "")?;
+    }
     
     write!(w, "{} <- function({}) .Call(", func.name, args)?;
+
     if use_symbols {
         write!(w, "wrap__{}", func.name)?;
     } else {

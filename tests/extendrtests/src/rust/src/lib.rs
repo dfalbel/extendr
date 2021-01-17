@@ -6,8 +6,12 @@ fn hello_world() -> &'static str {
 }
 
 // functions to test input/output conversion
+
+/// convert a double scalar to itself
+/// second line
 #[extendr]
 fn double_scalar(x: f64) -> f64 { x }
+
 #[extendr]
 fn int_scalar(x: i32) -> i32 { x }
 #[extendr]
