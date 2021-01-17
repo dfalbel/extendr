@@ -64,7 +64,6 @@ use syn::Token;
 mod output_r;
 
 const META_PREFIX: &str = "meta__";
-const INIT_PREFIX: &str = "init__";
 const WRAP_PREFIX: &str = "wrap__";
 
 #[derive(Debug)]
@@ -234,16 +233,12 @@ fn generate_wrappers(_opts: &ExtendrOptions, wrappers: &mut Vec<ItemFn>, prefix:
 
     let raw_wrap_name = format!("{}{}{}", WRAP_PREFIX, prefix, func_name);
     let wrap_name = format_ident!("{}{}{}", WRAP_PREFIX, prefix, func_name);
-    let init_name = format_ident!("{}{}{}", INIT_PREFIX, prefix, func_name);
     let meta_name = format_ident!("{}{}{}", META_PREFIX, prefix, func_name);
 
     let name_str = format!("{}", func_name);
     let doc_string = get_doc_string(attrs);
     let return_type_string = get_return_type(&sig);
-    // let return_type = &sig.output;
-    // let return_type_string = quote!{ #return_type }.to_string();
 
-    let wrap_name_str = format!("{}", wrap_name);
     let panic_str = format!("{} paniced.\0", func_name);
 
     let inputs = &sig.inputs;
@@ -296,8 +291,6 @@ fn generate_wrappers(_opts: &ExtendrOptions, wrappers: &mut Vec<ItemFn>, prefix:
         .map(|input| translate_meta_arg(input, self_ty))
         .collect();
 
-    let num_args = inputs.len() as i32;
-
     output_r::output_r_wrapper(
         func_name,
         &raw_wrap_name,
@@ -331,30 +324,7 @@ fn generate_wrappers(_opts: &ExtendrOptions, wrappers: &mut Vec<ItemFn>, prefix:
         }
     ));
 
-    // Generate init functions which gather metadata about functions and methods.
-    //
-    // Example:
-    // #[allow(non_snake_case)]
-    // fn init__hello(info: *mut extendr_api::DllInfo, call_methods: &mut Vec<extendr_api::CallMethod>) {
-    //     call_methods.push(extendr_api::CallMethod {
-    //         call_symbol: std::ffi::CString::new("wrap__hello").unwrap(),
-    //         func_ptr: wrap__hello as *const u8,
-    //         num_args: 0i32,
-    //     })
-    // }
-    wrappers.push(parse_quote!(
-        #[allow(non_snake_case)]
-        fn #init_name(info: *mut extendr_api::DllInfo, call_methods: &mut Vec<extendr_api::CallMethod>) {
-            call_methods.push(
-                extendr_api::CallMethod {
-                    call_symbol: std::ffi::CString::new(#wrap_name_str).unwrap(),
-                    func_ptr: #wrap_name as * const u8,
-                    num_args: #num_args,
-                }
-            )
-        }
-    ));
-
+    // Generate a function to push the metadata for a function.
     wrappers.push(parse_quote!(
         #[allow(non_snake_case)]
         fn #meta_name(metadata: &mut Vec<extendr_api::metadata::Func>) {
@@ -430,7 +400,6 @@ fn extendr_impl(mut item_impl: ItemImpl) -> TokenStream {
     let self_ty = item_impl.self_ty.as_ref();
     let self_ty_name = quote! {#self_ty}.to_string();
     let prefix = format!("{}__", self_ty_name);
-    let mut method_init_names = Vec::new();
     let mut method_meta_names = Vec::new();
     let mut wrappers = Vec::new();
     let doc_string = get_doc_string(&item_impl.attrs);
@@ -450,13 +419,11 @@ fn extendr_impl(mut item_impl: ItemImpl) -> TokenStream {
     // ```
     for impl_item in &mut item_impl.items {
         if let syn::ImplItem::Method(ref mut method) = impl_item {
-            method_init_names.push(format_ident!("{}{}__{}", INIT_PREFIX, self_ty_name, method.sig.ident));
             method_meta_names.push(format_ident!("{}{}__{}", META_PREFIX, self_ty_name, method.sig.ident));
             generate_wrappers(&opts, &mut wrappers, prefix.as_str(), &method.attrs, &method.sig, Some(self_ty));
         }
     }
 
-    let init_name = format_ident!("{}{}", INIT_PREFIX, self_ty_name);
     let meta_name = format_ident!("{}{}", META_PREFIX, self_ty_name);
 
     let finalizer_name = format_ident!("__finalize__{}", self_ty_name);
@@ -512,21 +479,6 @@ fn extendr_impl(mut item_impl: ItemImpl) -> TokenStream {
                     Box::from_raw(ptr);
                 }
             }
-        }
-
-        // Init function to call the method inits for this type.
-        // Example:
-        // ```ignore
-        // #[allow(non_snake_case)]
-        // fn init__Person(info: *mut extendr_api::DllInfo, call_methods: &mut Vec<extendr_api::CallMethod>) {
-        //     init__Person__new(info, call_methods);
-        //     init__Person__set_name(info, call_methods);
-        //     init__Person__name(info, call_methods);
-        // }
-        // ```
-        #[allow(non_snake_case)]
-        fn #init_name(info: *mut extendr_api::DllInfo, call_methods: &mut Vec<extendr_api::CallMethod>) {
-            #( #method_init_names(info, call_methods); )*
         }
 
         #[allow(non_snake_case)]
@@ -630,10 +582,7 @@ pub fn extendr_module(item: TokenStream) -> TokenStream {
     let module_metadata_name = format_ident!("get_{}_metadata", modname);
     let module_metadata_name_string = module_metadata_name.to_string();
     let wrap_module_metadata_name = format_ident!("{}get_{}_metadata", WRAP_PREFIX, modname);
-    let wrap_module_metadata_name_string = wrap_module_metadata_name.to_string();
 
-    let fninitnames = fnnames.iter().map(|id| format_ident!("{}{}", INIT_PREFIX, id));
-    let implinitnames = implnames.iter().map(|id| format_ident!("{}{}", INIT_PREFIX, id));
     let fnmetanames = fnnames.iter().map(|id| format_ident!("{}{}", META_PREFIX, id));
     let implmetanames = implnames.iter().map(|id| format_ident!("{}{}", META_PREFIX, id));
 
@@ -671,18 +620,7 @@ pub fn extendr_module(item: TokenStream) -> TokenStream {
         #[no_mangle]
         #[allow(non_snake_case)]
         pub extern "C" fn #module_init_name(info: * mut extendr_api::DllInfo) {
-            let mut call_methods = Vec::new();
-            #( #fninitnames(info, &mut call_methods); )*
-            #( #implinitnames(info, &mut call_methods); )*
-
-            // Add the metadata interface for R.
-            call_methods.push(extendr_api::CallMethod {
-                call_symbol: std::ffi::CString::new(#wrap_module_metadata_name_string).unwrap(),
-                func_ptr: #wrap_module_metadata_name as *const u8,
-                num_args: 0i32,
-            });
-
-            unsafe { extendr_api::register_call_methods(info, call_methods.as_ref()) };
+            unsafe { extendr_api::register_call_methods(info, #module_metadata_name()) };
         }
     })
 }
