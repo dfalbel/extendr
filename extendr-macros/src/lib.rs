@@ -579,9 +579,14 @@ pub fn extendr_module(item: TokenStream) -> TokenStream {
     let Module {modname, fnnames, implnames} = module;
     let modname = modname.unwrap();
     let module_init_name = format_ident!("R_init_{}_extendr", modname);
+
     let module_metadata_name = format_ident!("get_{}_metadata", modname);
     let module_metadata_name_string = module_metadata_name.to_string();
     let wrap_module_metadata_name = format_ident!("{}get_{}_metadata", WRAP_PREFIX, modname);
+
+    let make_module_wrappers_name = format_ident!("make_{}_wrappers", modname);
+    let make_module_wrappers_name_string = make_module_wrappers_name.to_string();
+    let wrap_make_module_wrappers = format_ident!("{}make_{}_wrappers", WRAP_PREFIX, modname);
 
     let fnmetanames = fnnames.iter().map(|id| format_ident!("{}{}", META_PREFIX, id));
     let implmetanames = implnames.iter().map(|id| format_ident!("{}{}", META_PREFIX, id));
@@ -605,6 +610,16 @@ pub fn extendr_module(item: TokenStream) -> TokenStream {
                 hidden: true,
             });
 
+            // Add this function to the list, but set hidden: true.
+            functions.push(extendr_api::metadata::Func {
+                doc: "Wrapper generator.",
+                name: #make_module_wrappers_name_string,
+                args: vec![extendr_api::metadata::Arg { name: "use_symbols", arg_type: "bool" }],
+                return_type: "String",
+                func_ptr: #wrap_make_module_wrappers as * const u8,
+                hidden: true,
+            });
+
             extendr_api::metadata::Metadata {
                 functions,
                 impls,
@@ -614,7 +629,18 @@ pub fn extendr_module(item: TokenStream) -> TokenStream {
         #[no_mangle]
         #[allow(non_snake_case)]
         pub extern "C" fn #wrap_module_metadata_name() -> SEXP {
-            unsafe { Robj::from(#module_metadata_name()).get() }
+            unsafe { extendr_api::Robj::from(#module_metadata_name()).get() }
+        }
+
+        #[no_mangle]
+        #[allow(non_snake_case)]
+        pub extern "C" fn #wrap_make_module_wrappers(use_symbols_sexp: SEXP) -> SEXP {
+            unsafe {
+                let robj = new_borrowed(use_symbols_sexp);
+                let use_symbols : bool = <bool>::from_robj(&robj).unwrap();
+    
+                extendr_api::Robj::from(#module_metadata_name().make_r_wrappers(use_symbols)).get()
+            }
         }
 
         #[no_mangle]

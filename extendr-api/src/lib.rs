@@ -284,8 +284,8 @@ pub unsafe fn register_call_methods(info: *mut libR_sys::DllInfo, metadata: Meta
         std::ptr::null(),
     );
 
-    libR_sys::R_useDynamicSymbols(info, 0);
-    libR_sys::R_forceSymbols(info, 1);
+    libR_sys::R_useDynamicSymbols(info, 1);
+    libR_sys::R_forceSymbols(info, 0);
 }
 
 /// Return true if this primitive is NA.
