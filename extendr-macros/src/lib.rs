@@ -115,11 +115,10 @@ fn translate_meta_arg(input: &FnArg, self_ty: Option<&syn::Type>) -> Expr {
             if self_ty.is_none() {
                 panic!("found &self in non-impl function - have you missed the #[extendr] before the impl?");
             }
-            let name_string = quote!{ #reciever }.to_string();
             let type_string = quote!{ #self_ty }.to_string();
             return parse_quote! {
                 extendr_api::metadata::Arg {
-                    name: #name_string,
+                    name: "self",
                     arg_type: #type_string
                 }
             }
