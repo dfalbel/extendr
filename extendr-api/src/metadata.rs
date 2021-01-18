@@ -81,7 +81,7 @@ impl From<Metadata> for Robj {
     }
 }
 
-fn write_r_wrapper(w: &mut Vec<u8>, func: &Func, package_name: &str, use_symbols: bool) -> std::io::Result<()> {
+fn write_r_wrapper(w: &mut Vec<u8>, func: &Func, package_name: &str, use_symbols: bool, src_prefix: &str, src_sep: &str, dest_prefix: &str, dest_sep: &str) -> std::io::Result<()> {
     if func.hidden {
         return Ok(());
     }
@@ -100,34 +100,39 @@ fn write_r_wrapper(w: &mut Vec<u8>, func: &Func, package_name: &str, use_symbols
         writeln!(w, "")?;
     }
     
-    write!(w, "{} <- function({}) .Call(", func.name, args)?;
+    write!(w, "{}{}{} <- function({}) .Call(", dest_prefix, dest_sep, func.name, args)?;
 
     if use_symbols {
-        write!(w, "wrap__{}", func.name)?;
+        write!(w, "wrap__{}{}{}", src_prefix, src_sep, func.name)?;
     } else {
-        write!(w, "\"wrap__{}\", PACKAGE={}", func.name, package_name)?;
+        write!(w, "\"wrap__{}{}{}\", PACKAGE=\"{}\"", src_prefix, src_sep, func.name, package_name)?;
     }
 
     if func.args.is_empty() {
-        writeln!(w, ")")?;
+        writeln!(w, ")\n")?;
     } else {
-        writeln!(w, ", {})", args)?;
+        writeln!(w, ", {})\n", args)?;
     }
     Ok(())
 }
 
 impl Metadata {
     pub fn make_r_wrappers(&self, use_symbols: bool) -> String {
-        let mut res = Vec::new();
+        let mut w = Vec::new();
         for func in &self.functions {
-            write_r_wrapper(&mut res, func, self.name, use_symbols).unwrap();
+            write_r_wrapper(&mut w, func, self.name, use_symbols, "", "", "", "").unwrap();
         }
 
         for imp in &self.impls {
+            writeln!(w, "{} <- new.env()\n", imp.name).unwrap();
+            writeln!(w, "setClass(\"{}\", representation( pointer = \"externalptr\" ) )", imp.name).unwrap();
+            writeln!(w, "setMethod(\"$\", \"{}\", function(x, name) function(...) {}[[name]](x@pointer, ...))", imp.name, imp.name).unwrap();
+            writeln!(w, "setMethod(\"initialize\", \"{}\", functMyClasion(.Object, ...) {{ .Object@pointer <- {}$new(...); .Object }});\n", imp.name, imp.name).unwrap();
+                        
             for func in &imp.methods {
-                write_r_wrapper(&mut res, func, self.name, use_symbols).unwrap();
+                write_r_wrapper(&mut w, func, self.name, use_symbols, imp.name, "__", imp.name, "$").unwrap();
             }
         }
-        unsafe { String::from_utf8_unchecked(res) }
+        unsafe { String::from_utf8_unchecked(w) }
     }
 }

@@ -21,4 +21,9 @@
 
 # CLion support files
 **/.idea
+
+# Misc RStudio & VS Code.
 .vscode/tasks.json
+tests/extendrtests.Rcheck/
+
+tests/extendrtests_0.1.0.tar.gz
