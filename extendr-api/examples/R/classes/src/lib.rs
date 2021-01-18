@@ -21,15 +21,34 @@ impl Person {
     }
 }
 
+struct Animal<'a> {
+    pub name: &'a str
+}
+
+#[extendr]
+impl<'a> Animal<'a> {
+    fn new () -> Self {
+        Self {name: &""}
+    }
+
+    fn set_name(&mut self, name: &'a str) {
+        self.name = name;
+    } 
+
+    fn name (&self) -> &str {
+        self.name
+    }
+} 
+
 #[extendr]
 fn aux_func() {
 }
-
 
 // Macro to generate exports
 extendr_module! {
     mod classes;
     impl Person;
+    impl Animal;
     fn aux_func;
 }
 
