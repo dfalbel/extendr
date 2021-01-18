@@ -14,6 +14,7 @@ get_extendrtests_metadata <- function() .Call(wrap__get_extendrtests_metadata)
 
 #' Build wrappers 
 #' 
+#' @param use_symbols use symbols instead of strings.
 #' @rdname wrappers
 #' @export
 make_extendrtests_wrappers <- function(use_symbols=TRUE) .Call(wrap__make_extendrtests_wrappers, use_symbols)
