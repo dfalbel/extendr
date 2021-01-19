@@ -271,7 +271,7 @@ fn generate_wrappers(_opts: &ExtendrOptions, wrappers: &mut Vec<ItemFn>, prefix:
     // }
     wrappers.push(parse_quote!(
         #[allow(non_snake_case)]
-        fn #init_name(info: *mut extendr_api::DllInfo, call_methods: &mut Vec<extendr_api::CallMethod>) {
+        pub fn #init_name(info: *mut extendr_api::DllInfo, call_methods: &mut Vec<extendr_api::CallMethod>) {
             call_methods.push(
                 extendr_api::CallMethod {
                     call_symbol: std::ffi::CString::new(#wrap_name_str).unwrap(),
