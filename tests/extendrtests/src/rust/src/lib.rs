@@ -21,6 +21,8 @@ fn int_scalar(x: i32) -> i32 { x }
 fn bool_scalar(x: bool) -> bool { x }
 #[extendr]
 fn char_scalar(x: String) -> String { x }
+#[extendr]
+fn char_vec(x: Vec<String>) -> Vec<String> {x}
 
 #[derive(Default, Debug)]
 struct MyClass {
@@ -54,7 +56,7 @@ extendr_module! {
     fn double_scalar;
     fn int_scalar;
     fn bool_scalar;
-    fn char_scalar;
-    
+    fn char_scalar;    
     impl MyClass;
+    fn char_vec;
 }
