@@ -326,7 +326,7 @@ fn generate_wrappers(_opts: &ExtendrOptions, wrappers: &mut Vec<ItemFn>, prefix:
     // Generate a function to push the metadata for a function.
     wrappers.push(parse_quote!(
         #[allow(non_snake_case)]
-        fn #meta_name(metadata: &mut Vec<extendr_api::metadata::Func>) {
+        pub fn #meta_name(metadata: &mut Vec<extendr_api::metadata::Func>) {
             let mut args = vec![
                 #( #meta_args, )*
             ];
