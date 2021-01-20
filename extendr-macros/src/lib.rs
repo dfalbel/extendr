@@ -481,7 +481,7 @@ fn extendr_impl(mut item_impl: ItemImpl) -> TokenStream {
         }
 
         #[allow(non_snake_case)]
-        fn #meta_name(impls: &mut Vec<extendr_api::metadata::Impl>) {
+        pub fn #meta_name(impls: &mut Vec<extendr_api::metadata::Impl>) {
             let mut methods = Vec::new();
             #( #method_meta_names(&mut methods); )*
             impls.push(extendr_api::metadata::Impl {
