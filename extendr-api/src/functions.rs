@@ -34,8 +34,7 @@ pub fn new_env_with_capacity(capacity: usize) -> Robj {
         // Unhashed envirnment
         call!("new.env", FALSE, global_env(), 0).unwrap()
     } else {
-        // Hashed environment, the pidgeon hole principle
-        // ensures there are empty slots in the hash table.
+        // Hashed environment for larger hashmaps.
         call!("new.env", TRUE, global_env(), capacity as i32 * 2 + 1).unwrap()
     }
 }
@@ -103,7 +102,6 @@ pub fn global_function<K: Into<Robj>>(key: K) -> Option<Robj> {
 /// }
 /// ```
 pub fn find_namespace<K: Into<Robj>>(key: K) -> Option<Robj> {
-    // single_threaded(|| unsafe { new_borrowed(R_FindNamespace(key.get())) });
     let res = single_threaded(|| call!(".getNamespace", key.into()));
     if let Ok(res) = res {
         Some(res)
@@ -373,4 +371,50 @@ pub fn blank_scalar_string() -> Robj {
 /// ```
 pub fn na_str() -> &'static str {
     unsafe { std::str::from_utf8_unchecked(&[b'N', b'A']) }
+}
+
+/// Parse a string into an R executable object
+/// ```
+/// use extendr_api::prelude::*;
+/// test! {
+///    let expr = parse("1 + 2").unwrap();
+///    assert!(expr.is_expr());
+/// }
+/// ```
+pub fn parse(code: &str) -> Result<Robj> {
+    single_threaded(|| unsafe {
+        use libR_sys::*;
+        let mut status = 0_u32;
+        let status_ptr = &mut status as *mut u32;
+        let codeobj: Robj = code.into();
+        let parsed = new_owned(R_ParseVector(codeobj.get(), -1, status_ptr, R_NilValue));
+        match status {
+            1 => Ok(parsed),
+            _ => Err(Error::ParseError {
+                code: code.into(),
+                status,
+            }),
+        }
+    })
+}
+
+/// Parse a string into an R executable object and run it.
+/// ```
+/// use extendr_api::prelude::*;
+/// test! {
+///    let res = eval_string("1 + 2").unwrap();
+///    assert_eq!(res, r!(3.));
+/// }
+/// ```
+pub fn eval_string(code: &str) -> Result<Robj> {
+    single_threaded(|| {
+        let expr = parse(code)?;
+        let mut res = Robj::from(());
+        if let Some(iter) = expr.as_list_iter() {
+            for lang in iter {
+                res = lang.eval()?
+            }
+        }
+        Ok(res)
+    })
 }

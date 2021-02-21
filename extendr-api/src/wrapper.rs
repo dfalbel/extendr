@@ -1,10 +1,10 @@
 //! Wrappers are lightweight proxies for references to R datatypes.
 //! They do not contain an Robj (see array.rs for an example of this).
 
+#[doc(hidden)]
 use crate::*;
 #[doc(hidden)]
 use libR_sys::*;
-#[doc(hidden)]
 
 /// Wrapper for creating symbols.
 ///
@@ -195,7 +195,7 @@ where
     T::IntoIter: ExactSizeIterator,
     T::Item: Into<Robj>,
 {
-    /// Make a list object from an array of Robjs.
+    /// Make a list object from an iterator of Robjs.
     /// ```
     /// use extendr_api::prelude::*;
     /// test! {
@@ -214,7 +214,7 @@ where
     T::IntoIter: ExactSizeIterator,
     T::Item: Into<Robj>,
 {
-    /// Make an expression object from an array of Robjs.
+    /// Make an expression object from an iterator of Robjs.
     /// ```
     /// use extendr_api::prelude::*;
     /// test! {
@@ -233,7 +233,7 @@ impl<'a> From<Raw<'a>> for Robj {
         single_threaded(|| unsafe {
             let val = val.0;
             let sexp = Rf_allocVector(RAWSXP, val.len() as R_xlen_t);
-            R_PreserveObject(sexp);
+            ownership::protect(sexp);
             let ptr = RAW(sexp);
             for (i, &v) in val.iter().enumerate() {
                 *ptr.offset(i as isize) = v;
@@ -377,7 +377,7 @@ where
     single_threaded(|| unsafe {
         let values = values.into_iter();
         let sexp = Rf_allocVector(sexptype, values.len() as R_xlen_t);
-        R_PreserveObject(sexp);
+        ownership::protect(sexp);
         for (i, val) in values.enumerate() {
             SET_VECTOR_ELT(sexp, i as R_xlen_t, val.into().get());
         }

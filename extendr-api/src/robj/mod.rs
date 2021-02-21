@@ -66,7 +66,7 @@ pub use rinternals::*;
 ///
 ///     // Use an iterator (like (1:10)[(1:10) %% 3 == 0])
 ///     let a = (1 ..= 10).filter(|v| v % 3 == 0).collect_robj();
-///     assert_eq!(a, c!(3, 6, 9));
+///     assert_eq!(a, r!([3, 6, 9]));
 /// }
 /// ```
 ///
@@ -75,10 +75,10 @@ pub use rinternals::*;
 /// ```
 /// use extendr_api::prelude::*;
 /// test! {
-///     let a : Robj = c!(1, 2, 3, 4, 5);
+///     let a : Robj = r!([1, 2, 3, 4, 5]);
 ///     let iter = a.as_integer_iter().unwrap();
 ///     let robj = iter.filter(|&x| x < 3).collect_robj();
-///     assert_eq!(robj, c!(1, 2));
+///     assert_eq!(robj, r!([1, 2]));
 /// }
 /// ```
 ///
@@ -118,10 +118,6 @@ pub enum Robj {
     #[doc(hidden)]
     Owned(SEXP),
 
-    //  This object references a SEXP such as an input parameter.
-    #[doc(hidden)]
-    Borrowed(SEXP),
-
     //  This object references a SEXP owned by libR.
     #[doc(hidden)]
     Sys(SEXP),
@@ -129,7 +125,12 @@ pub enum Robj {
 
 impl Clone for Robj {
     fn clone(&self) -> Self {
-        self.duplicate()
+        unsafe {
+            match *self {
+                Robj::Owned(sexp) => new_owned(sexp),
+                Robj::Sys(sexp) => new_sys(sexp),
+            }
+        }
     }
 }
 
@@ -146,7 +147,6 @@ impl Robj {
     pub unsafe fn get(&self) -> SEXP {
         match self {
             Robj::Owned(sexp) => *sexp,
-            Robj::Borrowed(sexp) => *sexp,
             Robj::Sys(sexp) => *sexp,
         }
     }
@@ -158,7 +158,6 @@ impl Robj {
     pub unsafe fn get_mut(&mut self) -> Option<SEXP> {
         match self {
             Robj::Owned(sexp) => Some(*sexp),
-            Robj::Borrowed(_) => None,
             Robj::Sys(_) => None,
         }
     }
@@ -167,6 +166,58 @@ impl Robj {
     /// Get the XXXSXP type of the object.
     pub fn sexptype(&self) -> u32 {
         unsafe { TYPEOF(self.get()) as u32 }
+    }
+
+    /// Get the type of an R object.
+    /// ```
+    /// use extendr_api::prelude::*;
+    /// test! {
+    ///     assert_eq!(r!(NULL).rtype(), RType::Null);
+    ///     assert_eq!(sym!(xyz).rtype(), RType::Symbol);
+    ///     assert_eq!(r!(Pairlist{names_and_values: vec![("a", r!(1))]}).rtype(), RType::Pairlist);
+    ///     assert_eq!(R!(function() {})?.rtype(), RType::Function);
+    ///     assert_eq!(new_env().rtype(), RType::Enviroment);
+    ///     assert_eq!(lang!("+", 1, 2).rtype(), RType::Language);
+    ///     assert_eq!(r!(Primitive("if")).rtype(), RType::Special);
+    ///     assert_eq!(r!(Primitive("+")).rtype(), RType::Builtin);
+    ///     assert_eq!(r!(Character("hello")).rtype(), RType::Character);
+    ///     assert_eq!(r!(TRUE).rtype(), RType::Logical);
+    ///     assert_eq!(r!(1).rtype(), RType::Integer);
+    ///     assert_eq!(r!(1.0).rtype(), RType::Real);
+    ///     assert_eq!(r!("1").rtype(), RType::String);
+    ///     assert_eq!(r!(List(&[1, 2])).rtype(), RType::List);
+    ///     assert_eq!(parse("x + y")?.rtype(), RType::Expression);
+    ///     assert_eq!(r!(Raw(&[1_u8, 2, 3])).rtype(), RType::Raw);
+    /// }
+    /// ```
+    pub fn rtype(&self) -> RType {
+        match self.sexptype() {
+            NILSXP => RType::Null,
+            SYMSXP => RType::Symbol,
+            LISTSXP => RType::Pairlist,
+            CLOSXP => RType::Function,
+            ENVSXP => RType::Enviroment,
+            PROMSXP => RType::Promise,
+            LANGSXP => RType::Language,
+            SPECIALSXP => RType::Special,
+            BUILTINSXP => RType::Builtin,
+            CHARSXP => RType::Character,
+            LGLSXP => RType::Logical,
+            INTSXP => RType::Integer,
+            REALSXP => RType::Real,
+            CPLXSXP => RType::Complex,
+            STRSXP => RType::String,
+            DOTSXP => RType::Dot,
+            ANYSXP => RType::Any,
+            VECSXP => RType::List,
+            EXPRSXP => RType::Expression,
+            BCODESXP => RType::Bytecode,
+            EXTPTRSXP => RType::ExternalPtr,
+            WEAKREFSXP => RType::WeakRef,
+            RAWSXP => RType::Raw,
+            S4SXP => RType::S4,
+            _ => RType::Unknown,
+        }
     }
 
     /// Get the extended length of the object.
@@ -299,12 +350,9 @@ impl Robj {
     /// assert_eq!(tot, 6);
     /// }
     /// ```
-    pub fn as_integer_iter<'a>(&self) -> Option<IntegerIter<'a>>
-    where
-        Self: 'a,
-    {
+    pub fn as_integer_iter(&self) -> Option<Int> {
         if let Some(slice) = self.as_integer_slice() {
-            Some(slice.iter().cloned())
+            Some(Int::from_slice(self.to_owned(), slice))
         } else {
             None
         }
@@ -375,9 +423,9 @@ impl Robj {
     ///     assert_eq!((nt, nf, nna), (1, 1, 1));
     /// }
     /// ```
-    pub fn as_logical_iter(&self) -> Option<LogicalIter> {
+    pub fn as_logical_iter(&self) -> Option<Logical> {
         if let Some(slice) = self.as_logical_slice() {
-            Some(slice.iter().cloned())
+            Some(Logical::from_slice(self.to_owned(), slice))
         } else {
             None
         }
@@ -417,9 +465,9 @@ impl Robj {
     ///     assert_eq!(tot, 6.);
     /// }
     /// ```
-    pub fn as_real_iter(&self) -> Option<RealIter> {
+    pub fn as_real_iter(&self) -> Option<Real> {
         if let Some(slice) = self.as_real_slice() {
-            Some(slice.iter().cloned())
+            Some(Real::from_slice(self.to_owned(), slice))
         } else {
             None
         }
@@ -679,65 +727,6 @@ impl Robj {
         }
     }
 
-    /// Parse a string into an R executable object
-    /// ```
-    /// use extendr_api::prelude::*;
-    /// test! {
-    ///    let expr = Robj::parse("1 + 2").unwrap();
-    ///    assert!(expr.is_expr());
-    /// }
-    /// ```
-    pub fn parse(code: &str) -> Result<Robj> {
-        single_threaded(|| unsafe {
-            use libR_sys::*;
-            let mut status = 0_u32;
-            let status_ptr = &mut status as *mut u32;
-            let codeobj: Robj = code.into();
-            let parsed = new_owned(R_ParseVector(codeobj.get(), -1, status_ptr, R_NilValue));
-            match status {
-                1 => Ok(parsed),
-                _ => Err(Error::ParseError {
-                    code: code.into(),
-                    status,
-                }),
-            }
-        })
-    }
-
-    /// Parse a string into an R executable object and run it.
-    /// ```
-    /// use extendr_api::prelude::*;
-    /// test! {
-    ///    let res = Robj::eval_string("1 + 2").unwrap();
-    ///    assert_eq!(res, r!(3.));
-    /// }
-    /// ```
-    pub fn eval_string(code: &str) -> Result<Robj> {
-        single_threaded(|| {
-            let expr = Robj::parse(code)?;
-            let mut res = Robj::from(());
-            if let Some(iter) = expr.as_list_iter() {
-                for lang in iter {
-                    res = lang.eval()?
-                }
-            }
-            Ok(res)
-        })
-    }
-
-    /// Unprotect an object - assumes a transfer of ownership.
-    /// This is unsafe because the object pointer may be left dangling.
-    #[doc(hidden)]
-    pub unsafe fn unprotected(self) -> Robj {
-        match self {
-            Robj::Owned(sexp) => {
-                single_threaded(|| R_ReleaseObject(sexp));
-                Robj::Borrowed(sexp)
-            }
-            _ => self,
-        }
-    }
-
     /// Return true if the object is owned by this wrapper.
     /// If so, it will be released when the wrapper drops.
     /// ```
@@ -846,7 +835,7 @@ impl Robj {
         if self.sexptype() == CHARSXP {
             None
         } else {
-            let res = unsafe { new_borrowed(Rf_getAttrib(self.get(), name.get())) };
+            let res = unsafe { new_owned(Rf_getAttrib(self.get(), name.get())) };
             if res.is_null() {
                 None
             } else {
@@ -855,26 +844,31 @@ impl Robj {
         }
     }
 
-    /// Set a specific attribute and return the value.
+    /// Set a specific attribute and return the object.
+    ///
+    /// Note that some combinations of attributes are illegal and this will
+    /// return an error.
     /// ```
     /// use extendr_api::prelude::*;
     /// test! {
     ///
-    ///    let mut robj = r!("hello");
-    ///    let value = robj.set_attrib(Symbol("xyz"), 1);
-    ///    assert_eq!(robj.get_attrib(Symbol("xyz")), Some(value));
+    ///    let mut robj = r!("hello").set_attrib(Symbol("xyz"), 1)?;
+    ///    assert_eq!(robj.get_attrib(Symbol("xyz")), Some(r!(1)));
     /// }
     /// ```
-    pub fn set_attrib<N, V>(&self, name: N, value: V) -> Robj
+    pub fn set_attrib<N, V>(&self, name: N, value: V) -> Result<Robj>
     where
         N: Into<Robj>,
         V: Into<Robj>,
     {
         let name = name.into();
         let value = value.into();
-        single_threaded(|| unsafe {
-            new_borrowed(Rf_setAttrib(self.get(), name.get(), value.get()))
-        })
+        unsafe {
+            single_threaded(|| {
+                catch_r_error(|| Rf_setAttrib(self.get(), name.get(), value.get()))
+                    .map(|_| self.clone())
+            })
+        }
     }
 
     /// Get the names attribute as a string iterator if one exists.
@@ -894,6 +888,33 @@ impl Robj {
         }
     }
 
+    /// Set the names attribute from a string iterator.
+    ///
+    /// Returns Error::NamesLengthMismatch if the length of the names does
+    /// not match the length of the object.
+    /// ```
+    /// use extendr_api::prelude::*;
+    /// test! {
+    ///     let mut obj = r!([1, 2, 3]).set_names(&["a", "b", "c"]).unwrap();
+    ///     assert_eq!(obj.names().unwrap().collect::<Vec<_>>(), vec!["a", "b", "c"]);
+    ///     assert_eq!(r!([1, 2, 3]).set_names(&["a", "b"]), Err(Error::NamesLengthMismatch));
+    /// }
+    /// ```
+    pub fn set_names<T>(&self, names: T) -> Result<Robj>
+    where
+        T: IntoIterator,
+        T::IntoIter: Iterator,
+        T::Item: ToVectorValue + AsRef<str>,
+    {
+        let iter = names.into_iter();
+        let robj = iter.collect_robj();
+        if robj.len() == self.len() {
+            self.set_attrib(names_symbol(), robj)
+        } else {
+            Err(Error::NamesLengthMismatch)
+        }
+    }
+
     /// Get the dim attribute as an integer iterator if one exists.
     /// ```
     /// use extendr_api::prelude::*;
@@ -904,11 +925,7 @@ impl Robj {
     ///    assert_eq!(dim, vec![2, 2]);
     /// }
     /// ```
-    pub fn dim<'a>(&self) -> Option<IntegerIter<'a>>
-    where
-        Self: 'a,
-        Robj: 'a,
-    {
+    pub fn dim(&self) -> Option<Int> {
         if let Some(dim) = self.get_attrib(dim_symbol()) {
             dim.as_integer_iter()
         } else {
@@ -968,6 +985,27 @@ impl Robj {
         }
     }
 
+    /// Set the class attribute from a string iterator.
+    ///
+    /// May return an error for some class names.
+    /// ```
+    /// use extendr_api::prelude::*;
+    /// test! {
+    ///     let mut obj = r!([1, 2, 3]).set_class(&["a", "b", "c"])?;
+    ///     assert_eq!(obj.class().unwrap().collect::<Vec<_>>(), vec!["a", "b", "c"]);
+    ///     assert_eq!(obj.inherits("a"), true);
+    /// }
+    /// ```
+    pub fn set_class<T>(&self, class: T) -> Result<Robj>
+    where
+        T: IntoIterator,
+        T::IntoIter: Iterator,
+        T::Item: ToVectorValue + AsRef<str>,
+    {
+        let iter = class.into_iter();
+        self.set_attrib(class_symbol(), iter.collect_robj())
+    }
+
     /// Return true if this class inherits this class.
     /// ```
     /// use extendr_api::prelude::*;
@@ -1018,16 +1056,8 @@ impl Robj {
 
 #[doc(hidden)]
 pub unsafe fn new_owned(sexp: SEXP) -> Robj {
-    single_threaded(|| R_PreserveObject(sexp));
+    single_threaded(|| ownership::protect(sexp));
     Robj::Owned(sexp)
-}
-
-#[doc(hidden)]
-pub unsafe fn new_borrowed<'a>(sexp: SEXP) -> Robj
-where
-    Robj: 'a,
-{
-    Robj::Borrowed(sexp)
 }
 
 #[doc(hidden)]
@@ -1223,8 +1253,7 @@ impl Drop for Robj {
     fn drop(&mut self) {
         unsafe {
             match self {
-                Robj::Owned(sexp) => single_threaded(|| R_ReleaseObject(*sexp)),
-                Robj::Borrowed(_) => (),
+                Robj::Owned(sexp) => ownership::unprotect(*sexp),
                 Robj::Sys(_) => (),
             }
         }

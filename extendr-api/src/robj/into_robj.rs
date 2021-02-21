@@ -56,7 +56,20 @@ impl From<&Robj> for Robj {
     // Note: we should probably have a much better reference
     // mechanism as double-free or underprotection is a distinct possibility.
     fn from(val: &Robj) -> Self {
-        unsafe { new_borrowed(val.get()) }
+        unsafe { new_owned(val.get()) }
+    }
+}
+
+pub trait IntoRobj {
+    fn into_robj(self) -> Robj;
+}
+
+impl<T> IntoRobj for T
+where
+    Robj: From<T>,
+{
+    fn into_robj(self) -> Robj {
+        self.into()
     }
 }
 
@@ -321,7 +334,7 @@ where
         let sexptype = I::Item::sexptype();
         if sexptype != 0 {
             let sexp = Rf_allocVector(sexptype, len as R_xlen_t);
-            R_PreserveObject(sexp);
+            ownership::protect(sexp);
             match sexptype {
                 REALSXP => {
                     let ptr = REAL(sexp);
@@ -497,23 +510,23 @@ impl_from_into_iter! {&'a [T]}
 impl_from_as_iterator! {Range<T>}
 impl_from_as_iterator! {RangeInclusive<T>}
 
-impl<'a> From<RealIter<'a>> for Robj {
+impl From<Real> for Robj {
     /// Convert a real iterator into a vector.
-    fn from(val: RealIter) -> Self {
+    fn from(val: Real) -> Self {
         val.collect_robj()
     }
 }
 
-impl<'a> From<IntegerIter<'a>> for Robj {
+impl From<Int> for Robj {
     /// Convert an integer iterator into a vector.
-    fn from(val: IntegerIter) -> Self {
+    fn from(val: Int) -> Self {
         val.collect_robj()
     }
 }
 
-impl<'a> From<LogicalIter<'a>> for Robj {
+impl From<Logical> for Robj {
     /// Convert a logical iterator into a vector.
-    fn from(val: LogicalIter) -> Self {
+    fn from(val: Logical) -> Self {
         val.collect_robj()
     }
 }
@@ -522,9 +535,14 @@ impl<'a> From<HashMap<&'a str, Robj>> for Robj {
     /// Convert a hashmap into a list.
     fn from(val: HashMap<&'a str, Robj>) -> Self {
         let res: Robj = List(val.iter().map(|(_, v)| v)).into();
-        let names = val.into_iter().map(|(k, _)| k).collect_robj();
-        res.set_attrib(names_symbol(), names);
-        res
+        res.set_names(val.into_iter().map(|(k, _)| k)).unwrap()
+    }
+}
+
+impl<'a> From<Vec<Robj>> for Robj {
+    /// Convert a vector of Robj into a list.
+    fn from(val: Vec<Robj>) -> Self {
+        List(val.iter()).into()
     }
 }
 

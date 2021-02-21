@@ -10,6 +10,11 @@ on:
       - main
       - master
 
+# cargo error handling is wrapped by ci-cargo, for simplicity and better logging.
+# To use ci-cargo in a step, source ci-cargo.ps1 (using `. ./ci-cargo.ps`, note the extra dot in front).
+# ci-cargo does not handle correctly -- separator, so wrap it in quotes ('--')
+# A special named parameter called `ActionName` can be used to set the name of current ci-cargo action,
+# used as `ci-cargo .... -ActionName "Called for documentation purposes"`.
 jobs:
   # All tests under this job are run with pre-computed libR-sys bindings.
   tests_no_bindgen:
@@ -113,7 +118,6 @@ jobs:
         run: |
           Del alias:R
           echo "LD_LIBRARY_PATH=$(R -s -e 'cat(normalizePath(R.home()))')/lib" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
       # Check code formatting. As this doesn't depend on the platform, do this only on one platform.
       - name: Check code formatting
         if: matrix.config.check_fmt
@@ -123,38 +127,36 @@ jobs:
       # Required by Windows builds, does not affect other platforms
       - name: Build
         run: |
+          . ./ci-cargo.ps1
           foreach($target in ($env:BUILD_TARGETS).Split(',')) {
-            echo "::group::Build for $target target"
-
-            cargo build $(if($target -ne 'default') {"--target=$target"} ) 
-            if (!$?) { 
-              echo "::error::Build for $target target" ;
-              throw "Last exit code $LASTEXITCODE"
-            }
-
-            echo "::endgroup::"
+            ci-cargo build $(if($target -ne 'default') {"--target=$target"} ) -ActionName "Building for $target target"
           }
-
       # For each target in the BUILD_TARGETS comma-separated list, run cargo test with appropriate target
       # Required by Windows builds, does not affect other platforms
+      # ! ci-cargo requires '--' to be wrapped in quotes (passed as an explicit string)
       - name: Run tests
         run: |
+          . ./ci-cargo.ps1
           foreach($target in ($env:BUILD_TARGETS).Split(',')) {
-            echo "::group::Test for $target target"
-            
-            cargo test $(if($target -ne 'default') {"--target=$target"} ) -- --nocapture
-            if (!$?) { 
-              echo "::error::Test for $target target" ;
-              throw "Last exit code $LASTEXITCODE"
-            }
-
-            echo "::endgroup::"
+            ci-cargo test $(if($target -ne 'default') {"--target=$target"} ) '--' --nocapture -ActionName "Testing for $target target"
           }
 
+      - name: Obtain 'rextendr'
+        run : |
+          git clone https://github.com/extendr/rextendr ./tests/rextendr
+
+      # Dependencies from both test packages are combined
       - name: Query dependencies for integration testing
         run: |
           install.packages('remotes')
-          saveRDS(remotes::dev_package_deps(pkgdir = "tests/extendrtests", dependencies = TRUE), ".github/depends.Rds", version = 2)
+          saveRDS(
+            unique(
+              rbind(
+                remotes::dev_package_deps(pkgdir = "tests/extendrtests", dependencies = TRUE), 
+                remotes::dev_package_deps(pkgdir = "tests/rextendr", dependencies = TRUE))),
+            ".github/depends.Rds", 
+            version = 2
+          )
           writeLines(sprintf("R-%i.%i", getRversion()$major, getRversion()$minor), ".github/R-version")
         shell: Rscript {0}
 
@@ -165,29 +167,97 @@ jobs:
           key: ${{ runner.os }}-${{ hashFiles('.github/R-version') }}-1-${{ hashFiles('.github/depends.Rds') }}
           restore-keys: ${{ runner.os }}-${{ hashFiles('.github/R-version') }}-1-
 
-      - name: Install R dependencies for integration testing
+      # Currently rextendr requires R > 4, so if R version is older (e.g. 3.6.3), rextendr tests are omitted
+      # Regex is used to inject absolute path into Cargo.toml
+      - name: Install dependencies & configure R for integration testing
         run: |
           remotes::install_deps(pkgdir = "tests/extendrtests", dependencies = TRUE)
+          if (as.integer(R.version$major) >= 4) { 
+            remotes::install_deps(pkgdir = "tests/rextendr", dependencies = TRUE)
+          }
           remotes::install_cran("rcmdcheck")
+
+          api_path <- normalizePath(file.path(getwd(), "extendr-api"), winslash = "/")
+          toml_path <- file.path(getwd(), "tests", "extendrtests", "src", "rust", "Cargo.toml")
+          lines <- readLines(toml_path)
+          lines <- gsub(
+            "(^\\s*extendr-api\\s*=\\s*\\{\\s*path\\s*=\\s*\")(.*?)(\"\\s*\\})",
+            paste0("\\1", api_path, "\\3"),
+            lines
+          )
+          writeLines(lines, toml_path)
         shell: Rscript {0}
         
       # Windows: modified PATH will launch 32-bit Rscript if the build targets only i686/i386, so no conflict will arise
       # Rust pseudo multi-targeting: R CMD CHECK receives an extra argument '--no-multiarch' if BUILD_TARGETS is not 'default' and does not contain any commas
-      - name: Run R integration tests
-        id: r_integration_tests
+      # To enable RStudio support, extendrtests should be installable from 'extendr/tests/extendrtests',
+      # for this work directory should be modified and then reverted back
+      - name: Run R integration tests using {extendrtests}
+        id: extendrtests_check
         env:
           _R_CHECK_CRAN_INCOMING_REMOTE_: false
         run: |
-          setwd("tests/extendrtests")
-          rcmdcheck::rcmdcheck(path = ".", args = c("--no-manual", "--as-cran"), error_on = "warning", check_dir = "../../../")
+          cat("::group::Checking 'extendrtests'\n")
+          rcmdcheck::rcmdcheck(
+            path = "tests/extendrtests", 
+            args = c("--no-manual", "--as-cran", "--force-multiarch"),
+            error_on = "warning", 
+            check_dir = "extendrtests_check"
+          )
+          cat("::endgroup::\n")
         shell: Rscript {0}
         
-      - name: Upload check results from R integration tests
-        if: failure()
+      # If R is older than 4.0, rextendr is not tested and a warning is emitted. 
+      # With https://github.com/extendr/rextendr/pull/31
+      # rextendr can be configured using environment variables.
+      # 'patch.crates_io' is used to point libraries to local copies of
+      # extendr-api and extendr-macros, so rextendr tests current version of extendr-*
+      - name: Run R integration tests using {rextendr}
+        id: rextendr_check
+        env:
+          _R_CHECK_CRAN_INCOMING_REMOTE_: false
+        run: |
+          if (as.integer(R.version$major) < 4) {
+            cat("::warning:: R version is not compatible with 'rextendr'\n")
+          } else {
+            cat("::group::Checking 'rextendr'\n")
+            
+            patch.crates_io <-
+              paste(
+                paste0(
+                  "extendr-api = { path = \"",
+                  normalizePath(file.path(getwd(), "extendr-api"), winslash = "/"),
+                  "\" }"),
+                paste0(
+                  "extendr-macros = { path = \"",
+                  normalizePath(file.path(getwd(), "extendr-macros"), winslash = "/"),
+                  "\" }"),
+                sep = ";")
+
+            Sys.setenv(REXTENDR_PATCH_CRATES_IO = patch.crates_io)
+            rcmdcheck::rcmdcheck(
+              path = "tests/rextendr", 
+              args = c("--no-manual", "--as-cran", "--force-multiarch"), 
+              error_on = "warning", 
+              check_dir = "rextendr_check")
+            cat("::endgroup::\n")
+          }
+        shell: Rscript {0}
+
+
+      - name: Upload extendrtests check results from R integration tests
+        if: steps.extendrtests_check.outcome != 'success'
         uses: actions/upload-artifact@main
         with:
-          name:  ${{ matrix.config.os }}-R-${{ matrix.config.r }}-rust-${{ matrix.config.rust-version }}
-          path: check
+          name:  extendrtests-${{ matrix.config.os }}-R-${{ matrix.config.r }}-rust-${{ matrix.config.rust-version }}
+          path: extendrtests_check
+
+      - name: Upload rextendr check results from R integration tests
+        if: steps.rextendr_check.outcome != 'success'
+        uses: actions/upload-artifact@main
+        with:
+          name:  rextendr-${{ matrix.config.os }}-R-${{ matrix.config.r }}-rust-${{ matrix.config.rust-version }}
+          path: rextendr_check
 
 
   # All tests under this job are run with R devel and freshly generated bindings.
@@ -199,7 +269,7 @@ jobs:
   bindgen_no_cross_compile:
     runs-on: ${{ matrix.config.os }}
 
-    name: ${{ matrix.config.os }} w/ bindgen no cross-compile (R-${{ matrix.config.r }} rust-${{ matrix.config.rust-version }})
+    name: ${{ matrix.config.os }} w/ bindgen (R-${{ matrix.config.r }} rust-${{ matrix.config.rust-version }})
             
     strategy:
       fail-fast: false
@@ -223,8 +293,6 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       
-      # Default action allows to install only one toolchain,
-      # so Rust is set up manually.
       # 1. Update rustup
       # 2. For each target add respective toolchain &
       #    update target for that toolchain
@@ -269,7 +337,6 @@ jobs:
           r-version: ${{ matrix.config.r }}
           windows-path-include-mingw: false
       
-
       # 1. Inspect targets. If empty, assume 'x86_64' arch
       # 1.5 Make symlink to please i686 toolchain (https://github.com/rust-lang/cargo/issues/8990)
       # 2. Install msys2 packages (--needed skips already installed)
@@ -318,6 +385,7 @@ jobs:
       # 3.x Run build commands, checking for errors, providing explicit toolchain & target
       - name: Build
         run: |
+          . ./ci-cargo.ps1
           $targets = $env:BUILD_TARGETS.Split(',')
           $libclang_paths = $env:LIBCLANG_PATHS.Split([System.IO.Path]::PathSeparator)
           $itt = 0..($targets.Length - 1)
@@ -337,33 +405,21 @@ jobs:
               $env:LIBCLANG_PATH = $null
             }
 
-            echo "::group::Build extendr-api for $toolchain"
 
-            cargo +$toolchain build --manifest-path extendr-api/Cargo.toml --features tests-all $(if($target -ne 'default') {"--target=$target"} )
-            if (!$?) { 
-              echo "::error::Build extendr-api for $toolchain" 
-              throw "Last exit code $LASTEXITCODE"
-            }
-
-            echo "::endgroup::"
-          
-            echo "::group::Build extendr-engine for $toolchain"
-
-            cargo +$toolchain build --manifest-path extendr-engine/Cargo.toml --features tests-all $(if($target -ne 'default') {"--target=$target"} ) 
-            if (!$?) { 
-              echo "::error::Build extendr-engine for $toolchain"
-              throw "Last exit code $LASTEXITCODE"
-            }
-
-            echo "::endgroup::"
+            ci-cargo +$toolchain build --manifest-path extendr-api/Cargo.toml --features tests-all $(if($target -ne 'default') {"--target=$target"} ) -ActionName "Build extendr-api for $toolchain"
+         
+            ci-cargo +$toolchain build --manifest-path extendr-engine/Cargo.toml --features tests-all $(if($target -ne 'default') {"--target=$target"} ) -ActionName "Build extendr-engine for $toolchain"
+            
           }
         env: 
           BUILD_TARGETS: ${{ join(matrix.config.rust-targets, ',') }}
           RUST_TOOLCHAIN: ${{ matrix.config.rust-version }}
 
       # Identical to the build process, but running more test commands
+      # ! ci-cargo requires '--' to be wrapped in quotes (passed as an explicit string)
       - name: Run tests
         run: |
+          . ./ci-cargo.ps1
           $targets = $env:BUILD_TARGETS.Split(',')
           $libclang_paths = $env:LIBCLANG_PATHS.Split([System.IO.Path]::PathSeparator)
           $itt = 0..($targets.Length - 1)
@@ -383,45 +439,14 @@ jobs:
               $env:LIBCLANG_PATH = $null
             }
 
-            echo "::group::Test extendr-engine \w tests-all for $target target"
-
-            cargo +$toolchain test --manifest-path extendr-engine/Cargo.toml --features tests-all $(if($target -ne 'default') {"--target=$target"} ) -- --nocapture 
-            if (!$?) { 
-              echo "::error::Test extendr-engine \w tests-all for $target target" ;
-              throw "Last exit code $LASTEXITCODE"
-            }
-
-            echo "::endgroup::"
-          
-            echo "::group::Test extendr-api \w tests-all for $target target"
-
-            cargo +$toolchain test --manifest-path extendr-api/Cargo.toml --features tests-all $(if($target -ne 'default') {"--target=$target"} ) -- --nocapture 
-            if (!$?) { 
-              echo "::error::Test extendr-api \w tests-all for $target target" ;
-              throw "Last exit code $LASTEXITCODE"
-            }
-
-            echo "::endgroup::"
-                    
-            echo "::group::Test extendr-api \w tests-minimal for $target target"
-
-            cargo +$toolchain test --manifest-path extendr-api/Cargo.toml --features tests-minimal $(if($target -ne 'default') {"--target=$target"} ) -- --nocapture
-            if (!$?) { 
-              echo "::error::Test extendr-api \w tests-minimal for $target target" ;
-              throw "Last exit code $LASTEXITCODE"
-            }
-
-            echo "::endgroup::"
-          
-            echo "::group::Test extendr-macros for $target target"
-
-            cargo +$toolchain test --manifest-path extendr-macros/Cargo.toml  $(if($target -ne 'default') {"--target=$target"} ) -- --nocapture
-            if (!$?) { 
-              echo "::error::Test extendr-macros for $target target" ;
-              throw "Last exit code $LASTEXITCODE"
-            }
+            ci-cargo +$toolchain test --manifest-path extendr-engine/Cargo.toml --features tests-all $(if($target -ne 'default') {"--target=$target"} ) '--' --nocapture -ActionName "Test extendr-engine \w tests-all for $target target"
             
-            echo "::endgroup::"
+            ci-cargo +$toolchain test --manifest-path extendr-api/Cargo.toml --features tests-all $(if($target -ne 'default') {"--target=$target"} ) '--' --nocapture -ActionName "Test extendr-api \w tests-all for $target target"
+
+            ci-cargo +$toolchain test --manifest-path extendr-api/Cargo.toml --features tests-minimal $(if($target -ne 'default') {"--target=$target"} ) '--' --nocapture -ActionName "Test extendr-api \w tests-minimal for $target target"
+                      
+            ci-cargo +$toolchain test --manifest-path extendr-macros/Cargo.toml  $(if($target -ne 'default') {"--target=$target"} ) '--' --nocapture -ActionName "Test extendr-macros for $target target"
+            
           }
         env: 
           BUILD_TARGETS: ${{ join(matrix.config.rust-targets, ',') }}

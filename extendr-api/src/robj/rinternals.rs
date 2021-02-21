@@ -111,7 +111,9 @@ impl Robj {
     /// test! {
     ///    let my_fun = base_env().find_function(sym!(ls)).unwrap();
     ///    assert_eq!(my_fun.is_function(), true);
-    ///    assert!(base_env().find_function(sym!(qwertyuiop)).is_none());
+    ///
+    ///    // Note: this may crash on some versions of windows which don't support unwinding.
+    ///    // assert!(base_env().find_function(sym!(qwertyuiop)).is_none());
     /// }
     /// ```
     pub fn find_function<K: Into<Robj>>(&self, key: K) -> Option<Robj> {
@@ -137,7 +139,7 @@ impl Robj {
         // }
         unsafe {
             if let Ok(var) = catch_r_error(|| Rf_findFun(key.get(), self.get())) {
-                Some(new_borrowed(var))
+                Some(new_owned(var))
             } else {
                 None
             }
@@ -157,7 +159,9 @@ impl Robj {
     ///        .find_var(sym!(iris)).unwrap().eval_promise().unwrap();
     ///    assert_eq!(iris_dataframe.is_frame(), true);
     ///    assert_eq!(iris_dataframe.len(), 5);
-    ///    assert_eq!(global_env().find_var(sym!(imnotasymbol)), None);
+    ///
+    ///    // Note: this may crash on some versions of windows which don't support unwinding.
+    ///    //assert_eq!(global_env().find_var(sym!(imnotasymbol)), None);
     /// }
     /// ```
     pub fn find_var<K: Into<Robj>>(&self, key: K) -> Option<Robj> {
@@ -184,7 +188,7 @@ impl Robj {
         unsafe {
             if let Ok(var) = catch_r_error(|| Rf_findVar(key.get(), self.get())) {
                 if var != R_UnboundValue {
-                    Some(new_borrowed(var))
+                    Some(new_owned(var))
                 } else {
                     None
                 }
@@ -261,13 +265,13 @@ impl Robj {
     /// Internal function used to implement `#[extendr]` impl
     #[doc(hidden)]
     pub unsafe fn external_ptr_tag(&self) -> Self {
-        new_borrowed(R_ExternalPtrTag(self.get()))
+        new_owned(R_ExternalPtrTag(self.get()))
     }
 
     /// Internal function used to implement `#[extendr]` impl
     #[doc(hidden)]
     pub unsafe fn external_ptr_protected(&self) -> Self {
-        new_borrowed(R_ExternalPtrProtected(self.get()))
+        new_owned(R_ExternalPtrProtected(self.get()))
     }
 
     #[doc(hidden)]
@@ -426,7 +430,7 @@ impl Robj {
     }
 
     pub fn package_env_name(&self) -> Robj {
-        unsafe { new_borrowed(R_PackageEnvName(self.get())) }
+        unsafe { new_owned(R_PackageEnvName(self.get())) }
     }
 
     pub fn is_namespace_env(&self) -> bool {
@@ -434,6 +438,6 @@ impl Robj {
     }
 
     pub fn namespace_env_spec(&self) -> Robj {
-        unsafe { new_borrowed(R_NamespaceEnvSpec(self.get())) }
+        unsafe { new_owned(R_NamespaceEnvSpec(self.get())) }
     }
 }
