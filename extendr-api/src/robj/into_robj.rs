@@ -545,10 +545,3 @@ impl<'a> From<Vec<Robj>> for Robj {
         List(val.iter()).into()
     }
 }
-
-impl<'a> From<Vec<Robj>> for Robj {
-    /// Convert a vector of Robj into a list.
-    fn from(val: Vec<Robj>) -> Self {
-        List(val.iter()).into()
-    }
-}
