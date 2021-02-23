@@ -307,17 +307,20 @@ where
     }
 }
 
-impl<'a, T> FromRobj<'a> for Vec<T> 
+impl<'a, T: std::convert::TryFrom<Robj>> FromRobj<'a> for List<Vec<T>>
 where
-    T: FromRobj<'a>
+    <T as std::convert::TryFrom<Robj>>::Error: Into<&'static str>,
+    Vec<T>: std::iter::FromIterator<T>,
 {
-    fn from_robj (robj: &'a Robj) -> std::result::Result<Self, &'static str> {
-        let output : Vec<T>;
-        if let Some(x) = robj.as_list_iter() {
-            x.map(|v| output.push(v.into());
-            Ok(output)
+    fn from_robj(robj: &'a Robj) -> std::result::Result<Self, &'static str> {
+        if let Some(iter) = robj.as_list_iter() {
+            let inner = iter
+                .map(|r| <T>::try_from(r).map_err(|e| e.into()))
+                .collect::<std::result::Result<Vec<T>, &'static str>>();
+
+            inner.map(|vec| List(vec))
         } else {
-            Err("Expected a vector object.")
+            Err("Input must be a list.")
         }
     }
 }
